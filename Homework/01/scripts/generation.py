@@ -61,30 +61,38 @@ def generate(
     gen_ids = []
     # Изначально подидим в модель токен начала текста и нулевое состояние
     hx = None
-    tokens = torch.tensor([tokenizer.bos_token_id], dtype=torch.long)
+    tokens = torch.tensor([tokenizer.bos_token_id], dtype=torch.long).unsqueeze(0)  # Добавляем размер для батча
 
     model.eval()
     while len(gen_ids) < max_length:
         with torch.no_grad():
             # Получаем логиты следующего токена и следующее состояние
             logits, hx = model(tokens, hx)
+
+            # Берем только логиты для последнего токена
+            logits = logits[:, -1, :]  # Убедитесь, что logits имеют форму [batch_size, vocab_size]
+
             if not do_sample:
                 # Выбираем наиболее вероятный токен
-                new_token = <YOUR CODE HERE>
+                new_token = torch.argmax(logits, dim=-1).item()  # .item() преобразует тензор в число
             else:
                 logits /= temperature
                 # Получаем вероятностное распределение следующего токена
-                p = F.softmax(logits, -1)[0].numpy()
+                p = F.softmax(logits, dim=-1).cpu().numpy().flatten()  # Приводим к 1D
+
                 ids = np.arange(len(p))
                 if top_k is not None:
-                    # Выбираем top-k наиболее вероятных токенов. Используйте np.argpartition(...)
-                    ids = <YOUR CODE HERE>
-                    p = p[ids] / p[ids].sum()
-                new_token = np.random.choice(ids, p=p)
+                    # Выбираем top-k наиболее вероятных токенов
+                    top_k_ids = np.argpartition(p, -top_k)[-top_k:]  # Индексы top-k
+                    top_k_ids = top_k_ids[np.argsort(-p[top_k_ids])]  # Сортируем по вероятностям
+                    p = p[top_k_ids] / p[top_k_ids].sum()  # Нормализуем вероятности
+                    new_token = np.random.choice(top_k_ids, p=p)  # Выбираем токен из top-k
+                else:
+                    new_token = np.random.choice(ids, p=p)  # Общий выбор
 
         if new_token == tokenizer.eos_token_id:
             break
         gen_ids.append(new_token)
-        tokens = torch.tensor([new_token], dtype=torch.long)
+        tokens = torch.tensor([[new_token]], dtype=torch.long)  # Обновляем входные токены, добавляем размер для батча
 
     return tokenizer.decode(gen_ids)
